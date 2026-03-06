@@ -238,18 +238,23 @@ func carve_corridor(x1: int, y1: int, x2: int, y2: int):
 	map[y][x] = TileType.FLOOR
 
 func find_empty_spot() -> Vector2i:
+	var x = 0
+	var y = 0
 	while true:
-		var x = randi() % COLS
-		var y = randi() % ROWS
+		x = randi() % COLS
+		y = randi() % ROWS
 		if map[y][x] == TileType.FLOOR:
 			return Vector2i(x, y)
+	return Vector2i(x, y)
 
 func find_empty_spot_far_from_player(min_dist: int) -> Vector2i:
+	var pos = Vector2i(0, 0)
 	while true:
-		var pos = find_empty_spot()
+		pos = find_empty_spot()
 		var dist = abs(pos.x - player_pos.x) + abs(pos.y - player_pos.y)
 		if dist >= min_dist:
 			return pos
+	return pos
 
 func move_player(dx: int, dy: int):
 	var move_distance = 1 + speed_boost
