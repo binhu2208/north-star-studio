@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flicker - Torch Roguelike</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #0a0a0a;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        h1 {
+            color: #ffaa44;
+            text-shadow: 0 0 20px #ff6600;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        #game-container {
+            position: relative;
+            border: 3px solid #444;
+            border-radius: 4px;
+            box-shadow: 0 0 30px rgba(255, 100, 0, 0.3);
+        }
+        
+        canvas {
+            display: block;
+            background: #000;
+        }
+        
+        #ui {
+            display: flex;
+            gap: 30px;
+            margin-top: 15px;
+            font-size: 16px;
+        }
+        
+        .stat {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .stat-label {
+            color: #888;
+        }
+        
+        .stat-value {
+            color: #ffaa44;
+            font-weight: bold;
+        }
+        
+        #torch-bar {
+            width: 150px;
+            height: 12px;
+            background: #222;
+            border: 1px solid #444;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        
+        #torch-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff4400, #ffaa44);
+            transition: width 0.1s linear;
+        }
+        
+        #instructions {
+            margin-top: 20px;
+            color: #666;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        #instructions span {
+            color: #888;
+            margin: 0 10px;
+        }
+        
+        #game-over, #game-win {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 0, 0, 0.95);
+            padding: 40px 60px;
+            border-radius: 8px;
+            border: 2px solid;
+            display: none;
+        }
+        
+        #game-over {
+            border-color: #ff4444;
+            box-shadow: 0 0 40px rgba(255, 68, 68, 0.5);
+        }
+        
+        #game-win {
+            border-color: #44ff44;
+            box-shadow: 0 0 40px rgba(68, 255, 68, 0.5);
+        }
+        
+        #game-over h2 {
+            color: #ff4444;
+            font-size: 2.5em;
+            margin-bottom: 15px;
+        }
+        
+        #game-win h2 {
+            color: #44ff44;
+            font-size: 2.5em;
+            margin-bottom: 15px;
+        }
+        
+        .restart-btn {
+            margin-top: 20px;
+            padding: 12px 30px;
+            font-size: 18px;
+            font-family: 'Courier New', monospace;
+            background: #333;
+            color: #fff;
+            border: 2px solid #666;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .restart-btn:hover {
+            background: #444;
+            border-color: #888;
+        }
+        
+        #level-display {
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔥 FLICKER 🔥</h1>
+    
+    <div id="game-container">
+        <canvas id="game" width="800" height="600"></canvas>
+        
+        <div id="game-over">
+            <h2>EXTINGUISHED</h2>
+            <p>The darkness has consumed you...</p>
+            <button class="restart-btn" onclick="game.restart()">Try Again</button>
+        </div>
+        
+        <div id="game-win">
+            <h2>ESCAPE!</h2>
+            <p>You found the exit with torch to spare!</p>
+            <button class="restart-btn" onclick="game.restart()">Play Again</button>
+        </div>
+    </div>
+    
+    <div id="ui">
+        <div class="stat">
+            <span class="stat-label">TORCH:</span>
+            <div id="torch-bar">
+                <div id="torch-fill"></div>
+            </div>
+        </div>
+        <div class="stat">
+            <span class="stat-label">FUEL:</span>
+            <span class="stat-value" id="fuel-count">0</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">DEPTH:</span>
+            <span class="stat-value" id="level-display">1</span>
+        </div>
+    </div>
+    
+    <div id="instructions">
+        <span>WASD / Arrows to Move</span>
+        <span>•</span>
+        <span>Find 🚪 Exit</span>
+        <span>•</span>
+        <span>Collect ⚡ Fuel</span>
+        <span>•</span>
+        <span>Avoid 👁️ The Stalker</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        
+        // Game constants
+        const TILE_SIZE = 20;
+        const COLS = 40;
+        const ROWS = 30;
+        const MAX_TORCH = 100;
+        const TORCH_BURN_RATE = 0.08;
+        const FUEL_AMOUNT = 25;
+        const ENEMY_MOVE_INTERVAL = 800; // ms
+        
+        // Tile types
+        const TILES = {
+            WALL: 0,
+            FLOOR: 1,
+            EXIT: 2,
+            FUEL: 3
+        };
+        
+        class FlickerGame {
+            constructor() {
+                this.keys = {};
+                this.setupInput();
+                this.restart();
+                this.loop();
+            }
+            
+            setupInput() {
+                window.addEventListener('keydown', (e) => {
+                    this.keys[e.key] = true;
+                    
+                    // Prevent scrolling with arrow keys
+                    if(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                        e.preventDefault();
+                    }
+                    
+                    if (!this.gameOver && !this.gameWon) {
+                        this.handleInput(e.key);
+                    }
+                });
+                
+                window.addEventListener('keyup', (e) => {
+                    this.keys[e.key] = false;
+                });
+            }
+            
+            handleInput(key) {
+                let dx = 0, dy = 0;
+                
+                switch(key) {
+                    case 'w':
+                    case 'W':
+                    case 'ArrowUp':
+                        dy = -1;
+                        break;
+                    case 's':
+                    case 'S':
+                    case 'ArrowDown':
+                        dy = 1;
+                        break;
+                    case 'a':
+                    case 'A':
+                    case 'ArrowLeft':
+                        dx = -1;
+                        break;
+                    case 'd':
+                    case 'D':
+                    case 'ArrowRight':
+                        dx = 1;
+                        break;
+                }
+                
+                if (dx !== 0 || dy !== 0) {
+                    this.movePlayer(dx, dy);
+                }
+            }
+            
+            restart() {
+                this.gameOver = false;
+                this.gameWon = false;
+                this.torch = MAX_TORCH;
+                this.fuelCollected = 0;
+                this.level = 1;
+                this.lastEnemyMove = 0;
+                
+                document.getElementById('game-over').style.display = 'none';
+                document.getElementById('game-win').style.display = 'none';
+                
+                this.generateLevel();
+                this.updateUI();
+            }
+            
+            generateLevel() {
+                // Initialize empty map
+                this.map = [];
+                for (let y = 0; y < ROWS; y++) {
+                    this.map[y] = [];
+                    for (let x = 0; x < COLS; x++) {
+                        this.map[y][x] = TILES.WALL;
+                    }
+                }
+                
+                // Generate rooms and corridors using simple room generation
+                this.rooms = [];
+                this.generateRooms();
+                this.connectRooms();
+                
+                // Place player in first room
+                const startRoom = this.rooms[0];
+                this.player = {
+                    x: Math.floor(startRoom.x + startRoom.w / 2),
+                    y: Math.floor(startRoom.y + startRoom.h / 2)
+                };
+                
+                // Place exit in last room
+                const endRoom = this.rooms[this.rooms.length - 1];
+                this.exit = {
+                    x: Math.floor(endRoom.x + endRoom.w / 2),
+                    y: Math.floor(endRoom.y + endRoom.h / 2)
+                };
+                this.map[this.exit.y][this.exit.x] = TILES.EXIT;
+                
+                // Place fuel canisters
+                this.fuels = [];
+                const fuelCount = 3 + Math.floor(Math.random() * 3);
+                for (let i = 0; i < fuelCount; i++) {
+                    let pos = this.findEmptySpot();
+                    this.fuels.push(pos);
+                    this.map[pos.y][pos.x] = TILES.FUEL;
+                }
+                
+                // Place enemy far from player
+                this.enemy = this.findEmptySpotFarFromPlayer(15);
+            }
+            
+            generateRooms() {
+                const roomCount = 6 + Math.floor(Math.random() * 4);
+                
+                for (let i = 0; i < roomCount; i++) {
+                    let attempts = 0;
+                    while (attempts < 50) {
+                        const w = 4 + Math.floor(Math.random() * 6);
+                        const h = 4 + Math.floor(Math.random() * 6);
+                        const x = 1 + Math.floor(Math.random() * (COLS - w - 2));
+                        const y = 1 + Math.floor(Math.random() * (ROWS - h - 2));
+                        
+                        const newRoom = { x, y, w, h };
+                        
+                        if (!this.rooms.some(r => this.roomsIntersect(r, newRoom))) {
+                            this.rooms.push(newRoom);
+                            
+                            // Carve out room
+                            for (let ry = y; ry < y + h; ry++) {
+                                for (let rx = x; rx < x + w; rx++) {
+                                    this.map[ry][rx] = TILES.FLOOR;
+                                }
+                            }
+                            break;
+                        }
+                        attempts++;
+                    }
+                }
+            }
+            
+            roomsIntersect(a, b) {
+                return a.x - 1 < b.x + b.w + 1 &&
+                       a.x + a.w + 1 > b.x - 1 &&
+                       a.y - 1 < b.y + b.h + 1 &&
+                       a.y + a.h + 1 > b.y - 1;
+            }
+            
+            connectRooms() {
+                for (let i = 0; i < this.rooms.length - 1; i++) {
+                    const a = this.rooms[i];
+                    const b = this.rooms[i + 1];
+                    
+                    const ax = Math.floor(a.x + a.w / 2);
+                    const ay = Math.floor(a.y + a.h / 2);
+                    const bx = Math.floor(b.x + b.w / 2);
+                    const by = Math.floor(b.y + b.h / 2);
+                    
+                    // L-shaped corridor
+                    if (Math.random() < 0.5) {
+                        this.carveCorridor(ax, ay, bx, ay);
+                        this.carveCorridor(bx, ay, bx, by);
+                    } else {
+                        this.carveCorridor(ax, ay, ax, by);
+                        this.carveCorridor(ax, by, bx, by);
+                    }
+                }
+            }
+            
+            carveCorridor(x1, y1, x2, y2) {
+                const dx = Math.sign(x2 - x1);
+                const dy = Math.sign(y2 - y1);
+                
+                let x = x1, y = y1;
+                while (x !== x2 || y !== y2) {
+                    this.map[y][x] = TILES.FLOOR;
+                    if (x !== x2) x += dx;
+                    else if (y !== y2) y += dy;
+                }
+                this.map[y][x] = TILES.FLOOR;
+            }
+            
+            findEmptySpot() {
+                while (true) {
+                    const x = Math.floor(Math.random() * COLS);
+                    const y = Math.floor(Math.random() * ROWS);
+                    if (this.map[y][x] === TILES.FLOOR) {
+                        return { x, y };
+                    }
+                }
+            }
+            
+            findEmptySpotFarFromPlayer(minDist) {
+                while (true) {
+                    const pos = this.findEmptySpot();
+                    const dist = Math.abs(pos.x - this.player.x) + Math.abs(pos.y - this.player.y);
+                    if (dist >= minDist) {
+                        return pos;
+                    }
+                }
+            }
+            
+            movePlayer(dx, dy) {
+                const newX = this.player.x + dx;
+                const newY = this.player.y + dy;
+                
+                // Check bounds and walls
+                if (newX < 0 || newX >= COLS || newY < 0 || newY >= ROWS) return;
+                if (this.map[newY][newX] === TILES.WALL) return;
+                
+                // Move player
+                this.player.x = newX;
+                this.player.y = newY;
+                
+                // Check for exit
+                if (newX === this.exit.x && newY === this.exit.y) {
+                    this.gameWon = true;
+                    document.getElementById('game-win').style.display = 'block';
+                    return;
+                }
+                
+                // Check for fuel
+                const fuelIndex = this.fuels.findIndex(f => f.x === newX && f.y === newY);
+                if (fuelIndex !== -1) {
+                    this.torch = Math.min(MAX_TORCH, this.torch + FUEL_AMOUNT);
+                    this.fuelCollected++;
+                    this.fuels.splice(fuelIndex, 1);
+                    this.map[newY][newX] = TILES.FLOOR;
+                }
+            }
+            
+            updateEnemy() {
+                const now = Date.now();
+                if (now - this.lastEnemyMove < ENEMY_MOVE_INTERVAL) return;
+                this.lastEnemyMove = now;
+                
+                // Only move enemy if player is "noisy" (moving) or randomly
+                if (Math.random() < 0.3) return;
+                
+                // Simple pathfinding toward player
+                const dx = Math.sign(this.player.x - this.enemy.x);
+                const dy = Math.sign(this.player.y - this.enemy.y);
+                
+                // Try horizontal first, then vertical
+                let moved = false;
+                
+                if (dx !== 0 && Math.random() < 0.5) {
+                    const newX = this.enemy.x + dx;
+                    if (this.canMoveTo(newX, this.enemy.y)) {
+                        this.enemy.x = newX;
+                        moved = true;
+                    }
+                }
+                
+                if (!moved && dy !== 0) {
+                    const newY = this.enemy.y + dy;
+                    if (this.canMoveTo(this.enemy.x, newY)) {
+                        this.enemy.y = newY;
+                        moved = true;
+                    }
+                }
+                
+                if (!moved && dx !== 0) {
+                    const newX = this.enemy.x + dx;
+                    if (this.canMoveTo(newX, this.enemy.y)) {
+                        this.enemy.x = newX;
+                    }
+                }
+                
+                // Check collision with player
+                if (this.enemy.x === this.player.x && this.enemy.y === this.player.y) {
+                    this.torch = 0; // Enemy extinguishes your torch
+                }
+            }
+            
+            canMoveTo(x, y) {
+                if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return false;
+                return this.map[y][x] !== TILES.WALL;
+            }
+            
+            update() {
+                if (this.gameOver || this.gameWon) return;
+                
+                // Burn torch
+                this.torch -= TORCH_BURN_RATE;
+                if (this.torch <= 0) {
+                    this.torch = 0;
+                    this.gameOver = true;
+                    document.getElementById('game-over').style.display = 'block';
+                }
+                
+                this.updateEnemy();
+                this.updateUI();
+            }
+            
+            updateUI() {
+                const torchPercent = (this.torch / MAX_TORCH) * 100;
+                document.getElementById('torch-fill').style.width = torchPercent + '%';
+                document.getElementById('fuel-count').textContent = this.fuelCollected;
+                document.getElementById('level-display').textContent = this.level;
+                
+                // Change torch bar color based on level
+                const fill = document.getElementById('torch-fill');
+                if (torchPercent < 20) {
+                    fill.style.background = '#ff0000';
+                } else if (torchPercent < 50) {
+                    fill.style.background = 'linear-gradient(90deg, #ff4400, #ff8800)';
+                } else {
+                    fill.style.background = 'linear-gradient(90deg, #ff4400, #ffaa44)';
+                }
+            }
+            
+            getLightRadius() {
+                // Light radius shrinks as torch dims
+                const baseRadius = 8;
+                const minRadius = 2;
+                const torchRatio = this.torch / MAX_TORCH;
+                return minRadius + (baseRadius - minRadius) * torchRatio;
+            }
+            
+            getDistance(x1, y1, x2, y2) {
+                return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+            }
+            
+            isVisible(x, y) {
+                const dist = this.getDistance(x, y, this.player.x, this.player.y);
+                return dist <= this.getLightRadius();
+            }
+            
+            isInTorchlight(x, y) {
+                return this.isVisible(x, y);
+            }
+            
+            draw() {
+                // Clear canvas
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                const lightRadius = this.getLightRadius();
+                
+                // Draw map
+                for (let y = 0; y < ROWS; y++) {
+                    for (let x = 0; x < COLS; x++) {
+                        const px = x * TILE_SIZE;
+                        const py = y * TILE_SIZE;
+                        const dist = this.getDistance(x, y, this.player.x, this.player.y);
+                        const visible = dist <= lightRadius;
+                        const inTorchlight = this.isInTorchlight(x, y);
+                        
+                        if (visible) {
+                            // Calculate light intensity (1.0 at player, 0.0 at edge)
+                            const intensity = Math.max(0, 1 - (dist / lightRadius));
+                            
+                            switch(this.map[y][x]) {
+                                case TILES.WALL:
+                                    ctx.fillStyle = `rgb(${40 * intensity}, ${35 * intensity}, ${30 * intensity})`;
+                                    ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                                    // Wall highlight
+                                    ctx.fillStyle = `rgb(${60 * intensity}, ${50 * intensity}, ${40 * intensity})`;
+                                    ctx.fillRect(px, py, TILE_SIZE, 3);
+                                    break;
+                                case TILES.FLOOR:
+                                    ctx.fillStyle = `rgb(${30 * intensity}, ${25 * intensity}, ${20 * intensity})`;
+                                    ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                                    break;
+                                case TILES.EXIT:
+                                    ctx.fillStyle = `rgb(${20 * intensity}, ${40 * intensity}, ${20 * intensity})`;
+                                    ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                                    // Door glow
+                                    ctx.fillStyle = `rgb(${0}, ${100 * intensity + 50}, ${0})`;
+                                    ctx.font = '14px monospace';
+                                    ctx.textAlign = 'center';
+                                    ctx.fillText('🚪', px + TILE_SIZE/2, py + TILE_SIZE - 3);
+                                    break;
+                                case TILES.FUEL:
+                                    ctx.fillStyle = `rgb(${30 * intensity}, ${25 * intensity}, ${20 * intensity})`;
+                                    ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                                    // Fuel glow
+                                    ctx.fillStyle = `rgb(${255 * intensity}, ${200 * intensity}, ${50 * intensity})`;
+                                    ctx.font = '14px monospace';
+                                    ctx.textAlign = 'center';
+                                    ctx.fillText('⚡', px + TILE_SIZE/2, py + TILE_SIZE - 3);
+                                    break;
+                            }
+                        } else {
+                            // Memory of explored areas (very dim)
+                            if (this.map[y][x] === TILES.WALL) {
+                                ctx.fillStyle = '#111';
+                                ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                            }
+                        }
+                    }
+                }
+                
+                // Draw enemy (only if in torchlight)
+                if (this.isInTorchlight(this.enemy.x, this.enemy.y)) {
+                    const ex = this.enemy.x * TILE_SIZE;
+                    const ey = this.enemy.y * TILE_SIZE;
+                    const dist = this.getDistance(this.enemy.x, this.enemy.y, this.player.x, this.player.y);
+                    const intensity = Math.max(0, 1 - (dist / lightRadius));
+                    
+                    ctx.fillStyle = `rgb(${200 * intensity}, ${50 * intensity}, ${50 * intensity})`;
+                    ctx.font = '16px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('👁️', ex + TILE_SIZE/2, ey + TILE_SIZE - 2);
+                }
+                
+                // Draw player (the torchbearer)
+                const px = this.player.x * TILE_SIZE;
+                const py = this.player.y * TILE_SIZE;
+                
+                // Player glow
+                const gradient = ctx.createRadialGradient(
+                    px + TILE_SIZE/2, py + TILE_SIZE/2, 0,
+                    px + TILE_SIZE/2, py + TILE_SIZE/2, TILE_SIZE * 1.5
+                );
+                gradient.addColorStop(0, 'rgba(255, 150, 50, 0.8)');
+                gradient.addColorStop(1, 'rgba(255, 100, 0, 0)');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(px - TILE_SIZE, py - TILE_SIZE, TILE_SIZE * 3, TILE_SIZE * 3);
+                
+                // Player character
+                ctx.fillStyle = '#ffaa44';
+                ctx.font = '16px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('🔥', px + TILE_SIZE/2, py + TILE_SIZE - 2);
+                
+                // Draw darkness overlay (vignette effect)
+                const darkness = ctx.createRadialGradient(
+                    px + TILE_SIZE/2, py + TILE_SIZE/2, lightRadius * TILE_SIZE * 0.5,
+                    px + TILE_SIZE/2, py + TILE_SIZE/2, lightRadius * TILE_SIZE * 1.5
+                );
+                darkness.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                darkness.addColorStop(1, 'rgba(0, 0, 0, 0.95)');
+                
+                ctx.fillStyle = darkness;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Torch flicker effect
+                if (this.torch > 0 && Math.random() < 0.1) {
+                    ctx.fillStyle = `rgba(255, 100, 0, ${0.05 + Math.random() * 0.05})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+            }
+            
+            loop() {
+                this.update();
+                this.draw();
+                requestAnimationFrame(() => this.loop());
+            }
+        }
+        
+        // Start the game
+        const game = new FlickerGame();
+    </script>
+</body>
+</html>
