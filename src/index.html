@@ -59,6 +59,16 @@
             font-size: 14px;
         }
         #instructions span { color: #888; margin: 0 10px; }
+        .attack-effect {
+            position: absolute;
+            pointer-events: none;
+            animation: attackFlash 0.3s ease-out forwards;
+        }
+        @keyframes attackFlash {
+            0% { opacity: 1; transform: scale(0.5); }
+            50% { opacity: 0.8; transform: scale(1.2); }
+            100% { opacity: 0; transform: scale(1.5); }
+        }
         #game-over, #game-win, #level-complete, #game-victory, #upgrade-screen {
             position: absolute;
             top: 50%;
@@ -190,13 +200,15 @@
     <div id="instructions">
         <span>WASD / Arrows to Move</span>
         <span>•</span>
+        <span>SPACE to Attack</span>
+        <span>•</span>
         <span>R to Restart</span>
         <span>•</span>
         <span>Find 🚪 Exit</span>
         <span>•</span>
         <span>Collect ⚡ Fuel</span>
         <span>•</span>
-        <span>Avoid 👁️ The Stalker</span>
+        <span>Fight 👁️ The Stalker</span>
     </div>
 
 <script>
@@ -207,6 +219,8 @@ const BASE_TORCH_BURN_RATE = 2.4;
 const FUEL_AMOUNT = 25;
 const BASE_ENEMY_MOVE_INTERVAL = 800;
 const MAX_LEVELS = 3;
+const ATTACK_COST = 10; // 10% fuel per swing
+const ENEMY_RESPAWN_TIME = 5000; // 5 seconds
 const TILES = { WALL: 0, FLOOR: 1, EXIT: 2, FUEL: 3 };
 
 class FlickerGame {
@@ -235,13 +249,15 @@ class FlickerGame {
     
     handleInput(key) {
         let dx = 0, dy = 0;
+        let moved = false;
         switch(key) {
-            case 'w': case 'W': case 'ArrowUp': dy = -1; break;
-            case 's': case 'S': case 'ArrowDown': dy = 1; break;
-            case 'a': case 'A': case 'ArrowLeft': dx = -1; break;
-            case 'd': case 'D': case 'ArrowRight': dx = 1; break;
+            case 'w': case 'W': case 'ArrowUp': dy = -1; this.playerFacing = 'up'; moved = true; break;
+            case 's': case 'S': case 'ArrowDown': dy = 1; this.playerFacing = 'down'; moved = true; break;
+            case 'a': case 'A': case 'ArrowLeft': dx = -1; this.playerFacing = 'left'; moved = true; break;
+            case 'd': case 'D': case 'ArrowRight': dx = 1; this.playerFacing = 'right'; moved = true; break;
+            case ' ': case 'Spacebar': this.attack(); return;
         }
-        if (dx !== 0 || dy !== 0) this.movePlayer(dx, dy);
+        if (moved) this.movePlayer(dx, dy);
     }
     
     restart() {
@@ -259,6 +275,9 @@ class FlickerGame {
         this.speedBoost = 1;
         this.torchEfficiency = 1;
         this.visionBoost = 0;
+        this.playerFacing = 'down'; // Track facing direction
+        this.enemyAlive = true;
+        this.enemyRespawnTimer = null;
         this.updateLevelParams();
         document.getElementById('game-over').style.display = 'none';
         document.getElementById('game-win').style.display = 'none';
@@ -276,6 +295,13 @@ class FlickerGame {
     }
     
     generateLevel() {
+        // Clear any pending enemy respawn
+        if (this.enemyRespawnTimer) {
+            clearTimeout(this.enemyRespawnTimer);
+            this.enemyRespawnTimer = null;
+        }
+        this.enemyAlive = true;
+
         this.map = [];
         for (let y = 0; y < ROWS; y++) {
             this.map[y] = [];
@@ -427,6 +453,93 @@ class FlickerGame {
         this.updateUI();
     }
     
+    attack() {
+        // Always costs fuel, even if no enemy
+        this.torch = Math.max(0, this.torch - ATTACK_COST);
+
+        // Calculate attack position
+        let attackX = this.player.x;
+        let attackY = this.player.y;
+        switch(this.playerFacing) {
+            case 'up': attackY--; break;
+            case 'down': attackY++; break;
+            case 'left': attackX--; break;
+            case 'right': attackX++; break;
+        }
+
+        // Show attack visual effect
+        this.showAttackEffect(attackX, attackY);
+
+        // Play sound
+        this.playWhooshSound();
+
+        // Check if enemy is hit
+        if (this.enemyAlive && this.enemy.x === attackX && this.enemy.y === attackY) {
+            this.killEnemy();
+        }
+    }
+
+    killEnemy() {
+        this.enemyAlive = false;
+        this.showFloatingText('💀 KILL!', this.enemy.x * TILE_SIZE, this.enemy.y * TILE_SIZE - 10);
+
+        // Schedule respawn
+        if (this.enemyRespawnTimer) clearTimeout(this.enemyRespawnTimer);
+        this.enemyRespawnTimer = setTimeout(() => this.respawnEnemy(), ENEMY_RESPAWN_TIME);
+    }
+
+    respawnEnemy() {
+        if (this.gameOver || this.gameWon || this.gameVictory) return;
+        this.enemyAlive = true;
+        this.enemy = this.findEmptySpotFarFromPlayer(15);
+        this.showFloatingText('👁️ SPAWN', this.enemy.x * TILE_SIZE, this.enemy.y * TILE_SIZE - 10);
+    }
+
+    showAttackEffect(x, y) {
+        const container = document.getElementById('game-container');
+        const el = document.createElement('div');
+        el.className = 'attack-effect';
+        el.style.left = (x * TILE_SIZE) + 'px';
+        el.style.top = (y * TILE_SIZE) + 'px';
+        el.style.width = TILE_SIZE + 'px';
+        el.style.height = TILE_SIZE + 'px';
+
+        // Flame burst emoji effect
+        const flames = ['🔥', '✨', '⚡'];
+        el.textContent = flames[Math.floor(Math.random() * flames.length)];
+        el.style.fontSize = '20px';
+        el.style.display = 'flex';
+        el.style.alignItems = 'center';
+        el.style.justifyContent = 'center';
+        el.style.color = '#ffaa44';
+        el.style.textShadow = '0 0 10px #ff6600';
+
+        container.appendChild(el);
+        setTimeout(() => el.remove(), 300);
+    }
+
+    playWhooshSound() {
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.frequency.setValueAtTime(400, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.15);
+
+            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + 0.15);
+        } catch (e) {
+            // Audio not critical - silent fail
+        }
+    }
+
     showFloatingText(text, x, y) {
         const container = document.getElementById('game-container');
         const el = document.createElement('div');
@@ -439,6 +552,7 @@ class FlickerGame {
     }
     
     updateEnemy() {
+        if (!this.enemyAlive) return;
         const now = Date.now();
         if (now - this.lastEnemyMove < this.enemyMoveInterval) return;
         this.lastEnemyMove = now;
@@ -559,7 +673,7 @@ class FlickerGame {
                 }
             }
         }
-        if (this.isInTorchlight(this.enemy.x, this.enemy.y)) {
+        if (this.enemyAlive && this.isInTorchlight(this.enemy.x, this.enemy.y)) {
             const ex = this.enemy.x * TILE_SIZE, ey = this.enemy.y * TILE_SIZE;
             const dist = this.getDistance(this.enemy.x, this.enemy.y, this.player.x, this.player.y);
             const intensity = Math.max(0, 1 - (dist / lightRadius));
