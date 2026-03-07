@@ -1,24 +1,54 @@
 extends Node2D
 
+# ============================================================================
+# FLICKER - GODOT EDITION
+# Integrated Build v1.0
+# Balance: Hideo's Design | Art: Yoshi | Code: John
+# ============================================================================
+
 # Game Constants
-const TILE_SIZE = 20
-const COLS = 40
-const ROWS = 30
+const TILE_SIZE = 32  # Updated for 32x32 pixel art
+const COLS = 25  # Adjusted for larger tiles
+const ROWS = 19
 const MAX_TORCH = 100.0
-const BASE_TORCH_BURN_RATE = 2.4
-const FUEL_AMOUNT = 25.0
-const BASE_ENEMY_MOVE_INTERVAL = 0.8
-const MAX_LEVELS = 3
-const ATTACK_COST = 10.0
+
+# Balance Values (from Hideo's design)
+const BASE_TORCH_BURN_RATE = 5.0  # 5% per second (idle)
+const MOVE_BURN_MULTIPLIER = 2.0  # 10% per second when moving
+const ATTACK_COST = 15.0  # 15% per swing
+const CRITICAL_THRESHOLD = 20.0  # Red zone threshold
+
+# Fuel Pickup Types (from balance-sheet.md)
+const FUEL_SMALL = 10.0   # Small Ember: +10%
+const FUEL_MEDIUM = 25.0  # Medium Coal: +25%
+const FUEL_LARGE = 50.0   # Large Log: +50%
+
+# Enemy Balance (from Hideo's design)
+const ENEMY_SPEED_WITH_TORCH = 0.7   # 0.7x player speed when torch lit
+const ENEMY_SPEED_WITHOUT_TORCH = 1.3  # 1.3x player speed when torch out
+const ENEMY_FLEE_DISTANCE = 4.0  # tiles
+const DETECTION_TORCH = 8.0  # tiles when torch lit
+const DETECTION_DARK = 12.0  # tiles when torch out
 const ENEMY_RESPAWN_TIME = 5.0
 
+# Level Scaling
+const MAX_LEVELS = 3
+const BASE_ENEMY_MOVE_INTERVAL = 0.8
+
+# Upgrade Effects (from balance-sheet.md)
+const SPEED_BOOST_AMOUNT = 0.2  # +20% per stack
+const EFFICIENCY_BOOST_AMOUNT = 0.2  # -20% fuel consumption per stack
+const BRIGHT_BOOST_AMOUNT = 0.3  # +30% light radius
+const MAX_SPEED_STACKS = 3
+const MAX_EFFICIENCY_STACKS = 2
+
 # Tile Types
-enum TileType { WALL, FLOOR, EXIT, FUEL }
+enum TileType { WALL, FLOOR, EXIT, FUEL_SMALL_TILE, FUEL_MEDIUM_TILE, FUEL_LARGE_TILE }
 
 # Game State
 var map: Array = []
 var rooms: Array = []
-var fuels: Array = []
+var fuels: Array = []  # Now stores {pos: Vector2i, type: int, amount: float}
 var player_pos: Vector2i
 var exit_pos: Vector2i
 var enemy_pos: Vector2i
@@ -45,6 +75,7 @@ var vision_boost: int = 0
 
 # Player facing direction
 var player_facing: String = "down"
+var is_moving: bool = false
 
 # Nodes
 @onready var player: CharacterBody2D = $Player
@@ -61,8 +92,13 @@ func _process(delta):
 	if game_over or game_won or game_victory or showing_upgrade:
 		return
 	
-	# Update torch
-	torch -= torch_burn_rate * delta
+	# Update torch with movement multiplier
+	var current_burn = torch_burn_rate
+	if is_moving:
+		current_burn *= MOVE_BURN_MULTIPLIER
+	torch -= current_burn * delta
+	is_moving = false  # Reset for next frame
+	
 	if torch <= 0:
 		torch = 0
 		game_over = true
@@ -93,15 +129,19 @@ func _input(event):
 	
 	if event.is_action_pressed("move_up"):
 		player_facing = "up"
+		is_moving = true
 		move_player(0, -1)
 	elif event.is_action_pressed("move_down"):
 		player_facing = "down"
+		is_moving = true
 		move_player(0, 1)
 	elif event.is_action_pressed("move_left"):
 		player_facing = "left"
+		is_moving = true
 		move_player(-1, 0)
 	elif event.is_action_pressed("move_right"):
 		player_facing = "right"
+		is_moving = true
 		move_player(1, 0)
 	elif event.is_action_pressed("attack"):
 		attack()
@@ -121,13 +161,26 @@ func restart_game():
 	player_facing = "down"
 	
 	ui.hide_all_screens()
+	ui.reset_timer()
 	update_level_params()
 	generate_level()
 	update_ui()
 
 func update_level_params():
-	torch_burn_rate = BASE_TORCH_BURN_RATE * (1.0 + (level - 1) * 0.3) / torch_efficiency
-	enemy_move_interval = BASE_ENEMY_MOVE_INTERVAL * pow(0.85, level - 1)
+	# Apply difficulty scaling per level
+	var level_multiplier = 1.0 + (level - 1) * 0.3
+	torch_burn_rate = (BASE_TORCH_BURN_RATE * level_multiplier) / torch_efficiency
+	
+	# Enemy gets faster each level
+	enemy_move_interval = BASE_ENEMY_MOVE_INTERVAL * pow(0.85, level - 1) / get_enemy_speed_multiplier()
+
+func get_enemy_speed_multiplier() -> float:
+	# Returns speed multiplier based on level
+	match level:
+		1: return 0.85  # Level 1: slower
+		2: return 1.0   # Level 2: normal
+		3: return 1.15  # Level 3: faster
+		_: return 1.0
 
 func generate_level():
 	# Reset state
@@ -164,30 +217,73 @@ func generate_level():
 	)
 	map[exit_pos.y][exit_pos.x] = TileType.EXIT
 	
-	# Place fuel pickups
-	var fuel_count = 3 + randi() % 3 + level
-	for i in range(fuel_count):
-		var pos = find_empty_spot()
-		fuels.append(pos)
-		map[pos.y][pos.x] = TileType.FUEL
+	# Place fuel pickups with weighted distribution per level
+	place_fuel_pickups()
 	
 	# Place enemy far from player
-	enemy_pos = find_empty_spot_far_from_player(15)
+	enemy_pos = find_empty_spot_far_from_player(10)
 	
-	# Refill torch slightly
+	# Refill torch slightly between levels
 	torch = min(MAX_TORCH, torch + 30)
 	
 	# Update visual positions
 	update_visual_positions()
 
+func place_fuel_pickups():
+	# Fuel count decreases per level (scarcity increases)
+	var fuel_count = 4 - (level - 1)  # Level 1: 4, Level 2: 3, Level 3: 2
+	
+	for i in range(fuel_count):
+		var pos = find_empty_spot()
+		var fuel_type = roll_fuel_type()
+		var amount = FUEL_SMALL
+		var tile_type = TileType.FUEL_SMALL_TILE
+		
+		match fuel_type:
+			0:  # Small Ember (60% base, more common on L1)
+				amount = FUEL_SMALL
+				tile_type = TileType.FUEL_SMALL_TILE
+			1:  # Medium Coal (30% base)
+				amount = FUEL_MEDIUM
+				tile_type = TileType.FUEL_MEDIUM_TILE
+			2:  # Large Log (10% base, more common on L3)
+				amount = FUEL_LARGE
+				tile_type = TileType.FUEL_LARGE_TILE
+		
+		fuels.append({"pos": pos, "type": fuel_type, "amount": amount, "tile_type": tile_type})
+		map[pos.y][pos.x] = tile_type
+
+func roll_fuel_type() -> int:
+	# Adjust weights based on level
+	var roll = randf()
+	
+	match level:
+		1:  # Level 1: More small embers
+			if roll < 0.70: return 0  # 70% Small
+			elif roll < 0.95: return 1  # 25% Medium
+			else: return 2  # 5% Large
+		2:  # Level 2: Balanced
+			if roll < 0.50: return 0  # 50% Small
+			elif roll < 0.85: return 1  # 35% Medium
+			else: return 2  # 15% Large
+		3:  # Level 3: More large logs
+			if roll < 0.30: return 0  # 30% Small
+			elif roll < 0.60: return 1  # 30% Medium
+			else: return 2  # 40% Large
+		_:
+			if roll < 0.60: return 0
+			elif roll < 0.90: return 1
+			else: return 2
+
 func generate_rooms():
-	var room_count = int((6 + randi() % 4) * (1.0 + (level - 1) * 0.2))
+	# Room count scales slightly with level
+	var room_count = int((5 + randi() % 3) * (1.0 + (level - 1) * 0.1))
 	
 	for i in range(room_count):
 		var attempts = 0
 		while attempts < 50:
-			var w = 4 + randi() % 6
-			var h = 4 + randi() % 6
+			var w = 4 + randi() % 5
+			var h = 4 + randi() % 5
 			var x = 1 + randi() % (COLS - w - 2)
 			var y = 1 + randi() % (ROWS - h - 2)
 			var new_room = { "x": x, "y": y, "w": w, "h": h }
@@ -277,21 +373,24 @@ func move_player(dx: int, dy: int):
 			return
 		
 		# Check for fuel pickup
-		var fuel_index = -1
-		for j in range(fuels.size()):
-			if fuels[j].x == new_x and fuels[j].y == new_y:
-				fuel_index = j
-				break
-		
-		if fuel_index != -1:
-			torch = min(MAX_TORCH, torch + FUEL_AMOUNT)
-			fuel_collected += 1
-			total_fuel_collected += 1
-			fuels.remove_at(fuel_index)
-			map[new_y][new_x] = TileType.FLOOR
-			ui.show_floating_text("+25%", new_x * TILE_SIZE, new_y * TILE_SIZE)
+		check_fuel_pickup(new_x, new_y)
 	
 	update_visual_positions()
+
+func check_fuel_pickup(x: int, y: int):
+	for i in range(fuels.size()):
+		var fuel = fuels[i]
+		if fuel.pos.x == x and fuel.pos.y == y:
+			torch = min(MAX_TORCH, torch + fuel.amount)
+			fuel_collected += 1
+			total_fuel_collected += 1
+			fuels.remove_at(i)
+			map[y][x] = TileType.FLOOR
+			
+			# Show floating text with amount
+			var label = "+%d%%" % int(fuel.amount)
+			ui.show_floating_text(label, x * TILE_SIZE, y * TILE_SIZE)
+			break
 
 func on_reach_exit():
 	if level >= MAX_LEVELS:
@@ -308,11 +407,14 @@ func next_level():
 func select_upgrade(type: String):
 	match type:
 		"speed":
-			speed_boost += 1
+			if speed_boost < MAX_SPEED_STACKS:
+				speed_boost += 1
 		"efficiency":
-			torch_efficiency *= 1.3
+			if torch_efficiency < (1.0 + MAX_EFFICIENCY_STACKS * EFFICIENCY_BOOST_AMOUNT):
+				torch_efficiency *= (1.0 + EFFICIENCY_BOOST_AMOUNT)
 		"bright":
-			vision_boost += 1
+			if vision_boost == 0:  # Can only buy once
+				vision_boost = 1
 	
 	level += 1
 	fuel_collected = 0
@@ -355,28 +457,60 @@ func respawn_enemy():
 	if game_over or game_won or game_victory:
 		return
 	enemy_alive = true
-	enemy_pos = find_empty_spot_far_from_player(15)
+	enemy_pos = find_empty_spot_far_from_player(10)
 	enemy.visible = true
 	update_visual_positions()
 	ui.show_floating_text("SPAWN", enemy_pos.x * TILE_SIZE, enemy_pos.y * TILE_SIZE - 10)
 
 func update_enemy():
-	if randf() < 0.3:
+	# Skip movement randomly for less predictable behavior
+	if randf() < 0.2:
 		return
 	
-	var dx = sign(player_pos.x - enemy_pos.x)
-	var dy = sign(player_pos.y - enemy_pos.y)
-	var moved = false
-	
-	# Check if enemy is in light
 	var dist_to_player = get_distance(enemy_pos.x, enemy_pos.y, player_pos.x, player_pos.y)
 	var light_radius = get_light_radius()
 	var in_light = dist_to_player <= light_radius
+	var torch_critical = torch <= CRITICAL_THRESHOLD
 	
-	if in_light:
-		# Flee from player
-		dx = -dx
-		dy = -dy
+	# Determine AI state
+	var state = "PATROL"
+	if in_light and not torch_critical:
+		state = "FLEE"
+	elif dist_to_player <= get_detection_radius():
+		if not in_light or torch_critical:
+			state = "HUNT"
+		else:
+			state = "STALK"
+	
+	# Execute behavior based on state
+	var dx = 0
+	var dy = 0
+	
+	match state:
+		"FLEE":
+			# Move away from player
+			dx = -sign(player_pos.x - enemy_pos.x)
+			dy = -sign(player_pos.y - enemy_pos.y)
+		"HUNT":
+			# Move toward player aggressively
+			dx = sign(player_pos.x - enemy_pos.x)
+			dy = sign(player_pos.y - enemy_pos.y)
+		"STALK":
+			# Circle at edge of light
+			if randf() < 0.5:
+				dx = sign(player_pos.x - enemy_pos.x)
+			else:
+				dy = sign(player_pos.y - enemy_pos.y)
+			# Slow movement when stalking
+			if randf() < 0.5:
+				return
+		"PATROL":
+			# Random movement
+			dx = randi() % 3 - 1
+			dy = randi() % 3 - 1
+	
+	# Try to move
+	var moved = false
 	
 	if dx != 0 and randf() < 0.5:
 		var new_x = enemy_pos.x + dx
@@ -389,11 +523,6 @@ func update_enemy():
 		if can_move_to(enemy_pos.x, new_y):
 			enemy_pos.y = new_y
 			moved = true
-	
-	if not moved and dx != 0:
-		var new_x = enemy_pos.x + dx
-		if can_move_to(new_x, enemy_pos.y):
-			enemy_pos.x = new_x
 	
 	# Check collision with player
 	if enemy_pos.x == player_pos.x and enemy_pos.y == player_pos.y:
@@ -412,10 +541,16 @@ func get_distance(x1: int, y1: int, x2: int, y2: int) -> float:
 	return sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 func get_light_radius() -> float:
-	var base_radius = 8.0 + vision_boost
+	var base_radius = DETECTION_TORCH + (vision_boost * DETECTION_TORCH * BRIGHT_BOOST_AMOUNT)
 	var min_radius = 2.0
 	var torch_ratio = torch / MAX_TORCH
 	return min_radius + (base_radius - min_radius) * torch_ratio
+
+func get_detection_radius() -> float:
+	# Enemy detects player further when torch is out
+	if torch <= 0:
+		return DETECTION_DARK
+	return DETECTION_TORCH
 
 func update_light_radius():
 	var radius = get_light_radius()
@@ -427,7 +562,7 @@ func update_visual_positions():
 	exit_marker.position = Vector2(exit_pos.x * TILE_SIZE + TILE_SIZE / 2, exit_pos.y * TILE_SIZE + TILE_SIZE / 2)
 
 func update_ui():
-	ui.update_torch(torch, MAX_TORCH)
+	ui.update_torch(torch, MAX_TORCH, torch <= CRITICAL_THRESHOLD)
 	ui.update_fuel(fuel_collected)
 	ui.update_level(level)
 
@@ -459,37 +594,73 @@ func _draw():
 						var exit_color = Color(0, 0.4 * intensity * pulse, 0)
 						draw_rect(Rect2(px, py, TILE_SIZE, TILE_SIZE), Color(0.078, 0.157, 0.078) * intensity)
 						# Draw door symbol
-						draw_rect(Rect2(px + 4, py + 4, 12, 12), exit_color)
-					TileType.FUEL:
+						draw_rect(Rect2(px + 8, py + 8, 16, 16), exit_color)
+					TileType.FUEL_SMALL_TILE:
 						draw_rect(Rect2(px, py, TILE_SIZE, TILE_SIZE), Color(0.118, 0.098, 0.078) * intensity)
-						# Draw fuel symbol
-						draw_rect(Rect2(px + 6, py + 6, 8, 8), Color(1, 0.8, 0.2) * intensity)
+						draw_rect(Rect2(px + 10, py + 10, 12, 12), Color(1, 0.6, 0.2) * intensity)  # Small = orange
+					TileType.FUEL_MEDIUM_TILE:
+						draw_rect(Rect2(px, py, TILE_SIZE, TILE_SIZE), Color(0.118, 0.098, 0.078) * intensity)
+						draw_rect(Rect2(px + 8, py + 8, 16, 16), Color(1, 0.4, 0.1) * intensity)  # Medium = red-orange
+					TileType.FUEL_LARGE_TILE:
+						draw_rect(Rect2(px, py, TILE_SIZE, TILE_SIZE), Color(0.118, 0.098, 0.078) * intensity)
+						draw_rect(Rect2(px + 6, py + 6, 20, 20), Color(1, 0.2, 0.0) * intensity)  # Large = red
 						
 			elif map[y][x] == TileType.WALL:
 				draw_rect(Rect2(px, py, TILE_SIZE, TILE_SIZE), Color(0.067, 0.067, 0.067))
+	
+	# Draw fuels that are visible
+	for fuel in fuels:
+		var dist = get_distance(fuel.pos.x, fuel.pos.y, player_pos.x, player_pos.y)
+		if dist <= light_radius:
+			var intensity = max(0.0, 1.0 - (dist / light_radius))
+			var px = fuel.pos.x * TILE_SIZE
+			var py = fuel.pos.y * TILE_SIZE
+			
+			match fuel.type:
+				0:  # Small
+					draw_rect(Rect2(px + 10, py + 10, 12, 12), Color(1, 0.6, 0.2) * intensity)
+				1:  # Medium
+					draw_rect(Rect2(px + 8, py + 8, 16, 16), Color(1, 0.4, 0.1) * intensity)
+				2:  # Large
+					draw_rect(Rect2(px + 6, py + 6, 20, 20), Color(1, 0.2, 0.0) * intensity)
 	
 	# Draw exit
 	var exit_dist = get_distance(exit_pos.x, exit_pos.y, player_pos.x, player_pos.y)
 	if exit_dist <= light_radius:
 		var exit_intensity = max(0.0, 1.0 - (exit_dist / light_radius))
-		draw_rect(Rect2(exit_pos.x * TILE_SIZE + 4, exit_pos.y * TILE_SIZE + 4, 12, 12), Color(0, 1, 0) * exit_intensity)
+		draw_rect(Rect2(exit_pos.x * TILE_SIZE + 8, exit_pos.y * TILE_SIZE + 8, 16, 16), Color(0, 1, 0) * exit_intensity)
 	
 	# Draw enemy if visible and alive
 	if enemy_alive:
 		var enemy_dist = get_distance(enemy_pos.x, enemy_pos.y, player_pos.x, player_pos.y)
 		if enemy_dist <= light_radius:
 			var enemy_intensity = max(0.0, 1.0 - (enemy_dist / light_radius))
-			draw_circle(Vector2(enemy_pos.x * TILE_SIZE + TILE_SIZE/2, enemy_pos.y * TILE_SIZE + TILE_SIZE/2), 8, Color(0.8, 0.2, 0.2) * enemy_intensity)
-			# Draw eye
-			draw_circle(Vector2(enemy_pos.x * TILE_SIZE + TILE_SIZE/2 - 2, enemy_pos.y * TILE_SIZE + TILE_SIZE/2 - 2), 2, Color(1, 1, 1) * enemy_intensity)
-			draw_circle(Vector2(enemy_pos.x * TILE_SIZE + TILE_SIZE/2 + 2, enemy_pos.y * TILE_SIZE + TILE_SIZE/2 - 2), 2, Color(1, 1, 1) * enemy_intensity)
+			
+			# Enemy body color changes based on state
+			var in_light = enemy_dist <= light_radius
+			var torch_critical = torch <= CRITICAL_THRESHOLD
+			
+			var enemy_color: Color
+			if in_light and not torch_critical:
+				enemy_color = Color(0.5, 0.2, 0.2)  # Fleeing = darker
+			else:
+				enemy_color = Color(0.9, 0.1, 0.1)  # Hunting = bright red
+			
+			draw_circle(Vector2(enemy_pos.x * TILE_SIZE + TILE_SIZE/2, enemy_pos.y * TILE_SIZE + TILE_SIZE/2), 12, enemy_color * enemy_intensity)
+			# Draw eyes
+			draw_circle(Vector2(enemy_pos.x * TILE_SIZE + TILE_SIZE/2 - 3, enemy_pos.y * TILE_SIZE + TILE_SIZE/2 - 3), 3, Color(1, 1, 1) * enemy_intensity)
+			draw_circle(Vector2(enemy_pos.x * TILE_SIZE + TILE_SIZE/2 + 3, enemy_pos.y * TILE_SIZE + TILE_SIZE/2 - 3), 3, Color(1, 1, 1) * enemy_intensity)
 	
-	# Draw player flame glow
+	# Draw player
 	var player_px = player_pos.x * TILE_SIZE + TILE_SIZE / 2
 	var player_py = player_pos.y * TILE_SIZE + TILE_SIZE / 2
 	
-	# Player body
-	draw_circle(Vector2(player_px, player_py), 8, Color(1, 0.67, 0.27))
+	# Player body - color shifts based on torch level
+	var player_color = Color(1, 0.67, 0.27)
+	if torch <= CRITICAL_THRESHOLD:
+		player_color = Color(1, 0.3, 0.1)  # Redder when critical
+	
+	draw_circle(Vector2(player_px, player_py), 12, player_color)
 	
 	# Draw darkness overlay
 	for y in range(ROWS):

@@ -5,7 +5,6 @@ extends CanvasLayer
 @onready var level_label = $Control/LevelLabel
 @onready var time_label = $Control/TimeLabel
 @onready var game_over_screen = $GameOverScreen
-@onready var game_win_screen = $GameWinScreen
 @onready var level_complete_screen = $LevelCompleteScreen
 @onready var victory_screen = $VictoryScreen
 @onready var upgrade_screen = $UpgradeScreen
@@ -16,21 +15,24 @@ var start_time: int = 0
 func _ready():
 	start_time = Time.get_ticks_msec()
 
+func reset_timer():
+	start_time = Time.get_ticks_msec()
+
 func _process(delta):
 	var elapsed = (Time.get_ticks_msec() - start_time) / 1000
 	var minutes = elapsed / 60
 	var seconds = elapsed % 60
 	time_label.text = "Time: %d:%02d" % [minutes, seconds]
 
-func update_torch(current: float, maximum: float):
+func update_torch(current: float, maximum: float, is_critical: bool = false):
 	var percent = (current / maximum) * 100
 	torch_bar.size.x = 150 * (percent / 100)
 	
 	# Change color based on torch level
-	if percent < 20:
-		torch_bar.modulate = Color(1, 0, 0)  # Red
+	if is_critical or percent < 20:
+		torch_bar.modulate = Color(1, 0, 0)  # Red - critical
 	elif percent < 50:
-		torch_bar.modulate = Color(1, 0.5, 0)  # Orange
+		torch_bar.modulate = Color(1, 0.5, 0)  # Orange - warning
 	else:
 		torch_bar.modulate = Color(1, 0.67, 0.27)  # Normal orange
 
@@ -42,9 +44,6 @@ func update_level(level: int):
 
 func show_game_over():
 	game_over_screen.visible = true
-
-func show_game_win():
-	game_win_screen.visible = true
 
 func show_level_complete():
 	level_complete_screen.visible = true
@@ -63,7 +62,6 @@ func show_upgrade_screen():
 
 func hide_all_screens():
 	game_over_screen.visible = false
-	game_win_screen.visible = false
 	level_complete_screen.visible = false
 	victory_screen.visible = false
 	upgrade_screen.visible = false

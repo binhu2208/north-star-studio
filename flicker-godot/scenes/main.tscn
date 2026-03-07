@@ -40,7 +40,7 @@ font_color = Color(0.27, 0.53, 1, 1)
 script = ExtResource("1_abc123")
 
 [node name="Camera2D" type="Camera2D" parent="."]
-position = Vector2(400, 300)
+position = Vector2(400, 325)
 
 [node name="Player" type="CharacterBody2D" parent="."]
 position = Vector2(400, 300)
