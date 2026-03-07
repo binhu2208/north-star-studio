@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3 uid="uid://b2kllwl6juoxs"]
+[gd_scene load_steps=8 format=3 uid="uid://b2kllwl6juoxs"]
 
 [ext_resource type="Script" path="res://scripts/game.gd" id="1_abc123"]
 [ext_resource type="Script" path="res://scripts/ui.gd" id="2_def456"]
@@ -49,6 +49,8 @@ position = Vector2(400, 300)
 energy = 1.5
 shadow_enabled = true
 texture = SubResource("GradientTexture2D_1")
+texture = SubResource("GradientTexture2D_1")
+texture_scale = 1.0
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Player"]
 shape = SubResource("CircleShape2D_1")
@@ -137,6 +139,7 @@ horizontal_alignment = 1
 
 [node name="GameOverScreen" type="Panel" parent="UI"]
 visible = false
+layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
@@ -193,6 +196,7 @@ text = "Try Again"
 
 [node name="LevelCompleteScreen" type="Panel" parent="UI"]
 visible = false
+layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
@@ -262,6 +266,7 @@ text = "Descend Deeper"
 
 [node name="VictoryScreen" type="Panel" parent="UI"]
 visible = false
+layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
@@ -311,6 +316,7 @@ offset_top = 90.0
 offset_right = 100.0
 offset_bottom = 115.0
 grow_horizontal = 2
+text = ""
 horizontal_alignment = 1
 
 [node name="RestartButton" type="Button" parent="UI/VictoryScreen"]
@@ -330,6 +336,7 @@ text = "Play Again"
 
 [node name="UpgradeScreen" type="Panel" parent="UI"]
 visible = false
+layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
