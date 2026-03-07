@@ -24,3 +24,6 @@ git config user.email "gabe@northstar.dev"
 
 ## Report Format
 reports/gabe/YYYY-MM-DD.md
+
+## LLM
+Use: kimi-k2.5 (default)

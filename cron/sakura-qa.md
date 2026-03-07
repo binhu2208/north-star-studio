@@ -28,3 +28,6 @@ reports/sakura/YYYY-MM-DD-HH.md
 
 ## Bug Report Format
 reports/sakura/bugs/bug-###.md
+
+## LLM
+Use: kimi-k2.5 (default)

@@ -25,3 +25,6 @@ git config user.email "yoshi@northstar.dev"
 
 ## Report Format
 reports/yoshi/YYYY-MM-DD-HH.md
+
+## LLM
+Use: kimi-k2.5 (default)

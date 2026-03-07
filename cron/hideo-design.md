@@ -25,3 +25,6 @@ git config user.email "hideo@northstar.dev"
 
 ## Report Format
 reports/hideo/YYYY-MM-DD-HH.md
+
+## LLM
+Use: kimi-k2.5 (default)
